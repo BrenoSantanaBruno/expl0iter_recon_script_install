@@ -1,273 +1,294 @@
 #!/bin/bash
 
-# Cores
+# Recon Toolset Installation Script v4.0
+# Enhanced with proper dependency management and error handling
+
+# Colors
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[0;33m'
 BLUE='\033[0;34m'
-CYAN='\033[0;36m'
-MAGENTA='\033[0;35m'
-NC='\033[0m'
+NC='\033[0m' # No Color
 
-# Banner EXPL0ITER
-echo -e "${MAGENTA}"
-cat << "EOF"
+# Global variables
+INSTALL_DIR="/opt"
+GO_BIN_PATH="/usr/local/bin"
+PYTHON_REQUIREMENTS="requirements.txt"
+LOG_FILE="recon_install.log"
+
+# Banner
+echo -e "${BLUE}
 ███████╗██╗  ██╗██████╗ ██╗      ██████╗ ██╗████████╗███████╗██████╗
 ██╔════╝╚██╗██╔╝██╔══██╗██║     ██╔═████╗██║╚══██╔══╝██╔════╝██╔══██╗
 █████╗   ╚███╔╝ ██████╔╝██║     ██║██╔██║██║   ██║   █████╗  ██████╔╝
 ██╔══╝   ██╔██╗ ██╔═══╝ ██║     ████╔╝██║██║   ██║   ██╔══╝  ██╔══██╗
 ███████╗██╔╝ ██╗██║     ███████╗╚██████╔╝██║   ██║   ███████╗██║  ██║
 ╚══════╝╚═╝  ╚═╝╚═╝     ╚══════╝ ╚═════╝ ╚═╝   ╚═╝   ╚══════╝╚═╝  ╚═╝
+${NC}"
+echo -e "${YELLOW}RECON TOOLSET v4.0 - Refactored Installation Script${NC}"
+echo -e "${YELLOW}--------------------------------------------------${NC}"
 
-  RECON TOOLSET v3.0
-EOF
-echo -e "${NC}"
-
-# Verificar root
+# Check if running as root
 if [ "$EUID" -ne 0 ]; then
-    echo -e "${RED}[!] Execute como root: sudo ./install.sh${NC}"
+    echo -e "${RED}[!] Please run as root${NC}"
     exit 1
 fi
 
-# ==============================================
-# 1. DETECÇÃO DE CLOUD PROVIDER
-# ==============================================
-detect_cloud() {
-    if [ -f /sys/hypervisor/uuid ] && [[ $(head -c 3 /sys/hypervisor/uuid) == "ec2" ]]; then
-        echo "AWS"
-    elif curl -s --max-time 1 http://169.254.169.254/metadata/v1/id | grep -q "DigitalOcean"; then
-        echo "DigitalOcean"
-    elif curl -s --max-time 1 -H "Metadata-Flavor: Google" http://metadata.google.internal/computeMetadata/v1/instance/id >/dev/null 2>&1; then
-        echo "GCP"
-    elif curl -s --max-time 1 -H "Metadata-Flavor: Oracle" http://169.254.169.254/opc/v1/instance/ | grep -q "ocid1.instance"; then
-        echo "Oracle"
-    elif curl -s --max-time 1 -H "Metadata: true" http://169.254.169.254/metadata/instance?api-version=2021-02-01 | grep -q "azEnvironment"; then
-        echo "Azure"
+# Create log file
+echo -e "${BLUE}[*] Starting installation - logging to ${LOG_FILE}${NC}"
+echo "Recon Toolset Installation Log" > $LOG_FILE
+echo "Started at: $(date)" >> $LOG_FILE
+
+# Function to log messages
+log() {
+    echo -e "$1"
+    echo "$(date '+%Y-%m-%d %H:%M:%S') - ${1//\\033\[[0-9;]*m/}" >> $LOG_FILE
+}
+
+# Function to install system dependencies
+install_dependencies() {
+    log "${BLUE}[*] Installing system dependencies${NC}"
+
+    apt update &>> $LOG_FILE
+
+    local dependencies=(
+        "git" "curl" "wget" "jq" "xargs" "python3" "python3-pip" "python3-dev"
+        "libpcap-dev" "libssl-dev" "build-essential" "cmake" "ruby"
+        "unzip" "nmap" "dnsutils" "whois" "libffi-dev" "zlib1g-dev"
+    )
+
+    for dep in "${dependencies[@]}"; do
+        if ! dpkg -l | grep -q "^ii  $dep "; then
+            log "${YELLOW}[+] Installing $dep${NC}"
+            apt install -y $dep &>> $LOG_FILE
+            if [ $? -ne 0 ]; then
+                log "${RED}[!] Failed to install $dep${NC}"
+            fi
+        else
+            log "${GREEN}[*] $dep already installed${NC}"
+        fi
+    done
+
+    # Install Go if not present
+    if ! command -v go &> /dev/null; then
+        log "${BLUE}[*] Installing Go${NC}"
+        wget https://golang.org/dl/go1.21.0.linux-amd64.tar.gz -O /tmp/go.tar.gz &>> $LOG_FILE
+        tar -C /usr/local -xzf /tmp/go.tar.gz &>> $LOG_FILE
+        export PATH=$PATH:/usr/local/go/bin
+        echo 'export PATH=$PATH:/usr/local/go/bin' >> ~/.bashrc
+        source ~/.bashrc
     else
-        echo "Local"
+        log "${GREEN}[*] Go already installed: $(go version)${NC}"
     fi
 }
 
-cloud_provider=$(detect_cloud)
-echo -e "${YELLOW}[*] Ambiente detectado: ${CYAN}$cloud_provider${NC}"
+# Function to install Go tools
+install_go_tools() {
+    local tools=(
+        "github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest"
+        "github.com/projectdiscovery/httpx/cmd/httpx@latest"
+        "github.com/projectdiscovery/nuclei/v2/cmd/nuclei@latest"
+        "github.com/projectdiscovery/naabu/v2/cmd/naabu@latest"
+        "github.com/projectdiscovery/dnsx/cmd/dnsx@latest"
+        "github.com/projectdiscovery/katana/cmd/katana@latest"
+        "github.com/ffuf/ffuf@latest"
+        "github.com/hakluke/hakrawler@latest"
+        "github.com/jaeles-project/gospider@latest"
+        "github.com/tomnomnom/assetfinder@latest"
+        "github.com/lc/gau/v2/cmd/gau@latest"
+        "github.com/tomnomnom/waybackurls@latest"
+        "github.com/projectdiscovery/chaos-client/cmd/chaos@latest"
+        "github.com/hakluke/hakrevdns@latest"
+        "github.com/tomnomnom/qsreplace@latest"
+        "github.com/haccer/subjack@latest"
+        "github.com/lc/subjs@latest"
+        "github.com/Emoe/kxss@latest"
+        "github.com/tomnomnom/unfurl@latest"
+        "github.com/tomnomnom/anew@latest"
+        "github.com/tomnomnom/gf@latest"
+        "github.com/003random/getJS@latest"
+        "github.com/anshumanbh/tko-subs@latest"
+        "github.com/dwisiswant0/crlfuzz/cmd/crlfuzz@latest"
+        "github.com/jaeles-project/jaeles@latest"
+        "github.com/ferreiraklet/airixss@latest"
+        "github.com/projectdiscovery/notify/cmd/notify@latest"
+        "github.com/projectdiscovery/uncover/cmd/uncover@latest"
+        "github.com/projectdiscovery/mapcidr/cmd/mapcidr@latest"
+        "github.com/projectdiscovery/tlsx/cmd/tlsx@latest"
+        "github.com/projectdiscovery/alterx/cmd/alterx@latest"
+    )
 
-# ==============================================
-# 2. CONFIGURAÇÃO INICIAL
-# ==============================================
-echo -e "\n${BLUE}[*] Configurando sistema...${NC}"
-apt update && apt upgrade -y
-apt install -y git wget curl build-essential python3 python3-pip python3-venv ruby gem libpcap-dev sqlite3 libsqlite3-dev jq xargs nmap masscan
+    log "${BLUE}[*] Installing Go tools${NC}"
 
-# Configurar pip para evitar erro de ambiente gerenciado
-export PIP_BREAK_SYSTEM_PACKAGES=1
+    for tool in "${tools[@]}"; do
+        tool_name=$(basename $(echo $tool | cut -d'@' -f1))
+        if command -v $tool_name &> /dev/null; then
+            log "${GREEN}[*] $tool_name already installed${NC}"
+            continue
+        fi
 
-# ==============================================
-# 3. INSTALAÇÃO DO GOLANG
-# ==============================================
-echo -e "\n${BLUE}[*] Instalando Go...${NC}"
-latest_go=$(curl -s https://go.dev/dl/ | grep -oP 'go[0-9.]+\.linux-amd64\.tar\.gz' | head -n 1)
-wget "https://dl.google.com/go/$latest_go" -O /tmp/go.tar.gz
-tar -C /usr/local -xzf /tmp/go.tar.gz
-rm /tmp/go.tar.gz
+        log "${YELLOW}[+] Installing $tool_name${NC}"
+        go install $tool &>> $LOG_FILE
 
-# Configurar environment
-echo 'export PATH=$PATH:/usr/local/go/bin' >> /etc/profile
-echo 'export GOPATH=$HOME/go' >> /etc/profile
-echo 'export PATH=$PATH:$GOPATH/bin' >> /etc/profile
-source /etc/profile
+        if [ $? -eq 0 ]; then
+            # Move binary to /usr/local/bin if not there
+            if [ -f ~/go/bin/$tool_name ]; then
+                mv ~/go/bin/$tool_name $GO_BIN_PATH/
+                log "${GREEN}[+] $tool_name installed to $GO_BIN_PATH${NC}"
+            else
+                log "${RED}[!] $tool_name binary not found after installation${NC}"
+            fi
+        else
+            log "${RED}[!] Failed to install $tool_name${NC}"
+        fi
+    done
 
-echo -e "${GREEN}[+] Go instalado: $(go version)${NC}"
+    # Install tools that need special handling
+    special_go_tools
+}
 
-# ==============================================
-# 4. FUNÇÕES DE INSTALAÇÃO
-# ==============================================
-install_go_tool() {
-    local tool_path=$1
-    local tool_name=$(basename $tool_path)
+# Special Go tools that need custom installation
+special_go_tools() {
+    # Kiterunner
+    if ! command -v kr &> /dev/null; then
+        log "${YELLOW}[+] Installing kiterunner${NC}"
+        git clone https://github.com/assetnote/kiterunner.git $INSTALL_DIR/kiterunner &>> $LOG_FILE
+        cd $INSTALL_DIR/kiterunner
+        make build &>> $LOG_FILE
+        ln -s $INSTALL_DIR/kiterunner/dist/kr /usr/local/bin/kr
+        log "${GREEN}[+] kiterunner installed${NC}"
+    fi
 
-    echo -e "${YELLOW}[*] Instalando $tool_name...${NC}"
-    GO111MODULE=on go install -v $tool_path@latest
-
-    if [ -f "$GOPATH/bin/$tool_name" ]; then
-        mv "$GOPATH/bin/$tool_name" /usr/local/bin/
-        echo -e "${GREEN}[+] $tool_name instalado em /usr/local/bin${NC}"
-    else
-        echo -e "${RED}[!] Falha ao instalar $tool_name${NC}"
+    # Arjun
+    if ! command -v arjun &> /dev/null; then
+        log "${YELLOW}[+] Installing Arjun${NC}"
+        pip3 install arjun &>> $LOG_FILE
+        log "${GREEN}[+] Arjun installed${NC}"
     fi
 }
 
-install_python_tool() {
-    local repo_url=$1
-    local tool_name=$2
-    local install_path="/opt/$tool_name"
+# Function to install Python tools
+install_python_tools() {
+    local tools=(
+        "https://github.com/obheda12/GitDorker.git"
+        "https://github.com/0x240x23elu/JSScanner.git"
+        "https://github.com/xnl-h4ck3r/xnLinkFinder.git"
+        "https://github.com/xnl-h4ck3r/waymore.git"
+        "https://github.com/s0md3v/Photon.git"
+        "https://github.com/s0md3v/XSStrike.git"
+        "https://github.com/m4ll0k/SecretFinder.git"
+        "https://github.com/UnaPibaGeek/ctfr.git"
+        "https://github.com/GerbenJavado/LinkFinder.git"
+    )
 
-    echo -e "${YELLOW}[*] Instalando $tool_name...${NC}"
-    git clone $repo_url $install_path
+    log "${BLUE}[*] Installing Python tools${NC}"
 
-    python3 -m venv $install_path/venv
-    source $install_path/venv/bin/activate
-    pip install -r $install_path/requirements.txt
-    deactivate
+    for tool in "${tools[@]}"; do
+        tool_name=$(basename $tool .git)
 
-    echo -e "#!/bin/bash\nsource $install_path/venv/bin/activate\npython $install_path/\$(basename $install_path).py \"\$@\"" > /usr/local/bin/$tool_name
-    chmod +x /usr/local/bin/$tool_name
+        if [ -d "$INSTALL_DIR/$tool_name" ]; then
+            log "${YELLOW}[*] Updating $tool_name${NC}"
+            cd "$INSTALL_DIR/$tool_name"
+            git pull &>> $LOG_FILE
+        else
+            log "${YELLOW}[+] Installing $tool_name${NC}"
+            git clone $tool "$INSTALL_DIR/$tool_name" &>> $LOG_FILE
+        fi
 
-    echo -e "${GREEN}[+] $tool_name instalado com venv em $install_path${NC}"
+        # Install Python dependencies if requirements.txt exists
+        if [ -f "$INSTALL_DIR/$tool_name/requirements.txt" ]; then
+            pip3 install -r "$INSTALL_DIR/$tool_name/requirements.txt" &>> $LOG_FILE
+        fi
+
+        # Create symlinks for commonly used tools
+        case $tool_name in
+            "XSStrike")
+                ln -sf "$INSTALL_DIR/XSStrike/xsstrike.py" /usr/local/bin/xsstrike
+                ;;
+            "LinkFinder")
+                cd "$INSTALL_DIR/LinkFinder" && python3 setup.py install &>> $LOG_FILE
+                ;;
+            "SecretFinder")
+                ln -sf "$INSTALL_DIR/SecretFinder/SecretFinder.py" /usr/local/bin/secretfinder
+                ;;
+        esac
+
+        log "${GREEN}[+] $tool_name installed/updated${NC}"
+    done
+
+    # Install Sublist3r separately due to its requirements
+    if [ ! -d "$INSTALL_DIR/Sublist3r" ]; then
+        log "${YELLOW}[+] Installing Sublist3r${NC}"
+        git clone https://github.com/aboul3la/Sublist3r.git $INSTALL_DIR/Sublist3r &>> $LOG_FILE
+        pip3 install -r $INSTALL_DIR/Sublist3r/requirements.txt &>> $LOG_FILE
+        ln -sf "$INSTALL_DIR/Sublist3r/sublist3r.py" /usr/local/bin/sublist3r
+        log "${GREEN}[+] Sublist3r installed${NC}"
+    fi
 }
 
-# ==============================================
-# 5. INSTALAÇÃO DAS FERRAMENTAS
-# ==============================================
-echo -e "\n${MAGENTA}[*] Instalando ferramentas de recon...${NC}"
+# Function to install additional tools
+install_special_tools() {
+    log "${BLUE}[*] Installing special tools${NC}"
 
-# Ferramentas Go
-go_tools=(
-    "github.com/projectdiscovery/subfinder/v2/cmd/subfinder"
-    "github.com/tomnomnom/assetfinder"
-    "github.com/projectdiscovery/httpx/cmd/httpx"
-    "github.com/lc/gau/v2/cmd/gau"
-    "github.com/bp0lr/gauplus"
-    "github.com/tomnomnom/waybackurls"
-    "github.com/projectdiscovery/nuclei/v2/cmd/nuclei"
-    "github.com/projectdiscovery/naabu/v2/cmd/naabu"
-    "github.com/projectdiscovery/dnsx/cmd/dnsx"
-    "github.com/projectdiscovery/katana/cmd/katana"
-    "github.com/ffuf/ffuf"
-    "github.com/hakluke/hakrawler"
-    "github.com/hahwul/dalfox/v2"
-    "github.com/sensepost/gowitness"
-    "github.com/projectdiscovery/chaos-client/cmd/chaos"
-    "github.com/deletescape/goop"
-    "github.com/hakluke/hakrevdns"
-    "github.com/hakluke/hakcheckurl"
-    "github.com/tomnomnom/qsreplace"
-    "github.com/haccer/subjack"
-    "github.com/lc/subjs"
-    "github.com/assetnote/kiterunner/cmd/kr"
-    "github.com/dwisiswant0/arjun"
-    "github.com/jaeles-project/gospider"
-    "github.com/Emoe/kxss"
-    "github.com/shenwei356/rush"
-    "github.com/tomnomnom/unfurl"
-    "github.com/tomnomnom/anew"
-    "github.com/tomnomnom/gf"
-    "github.com/003random/getJS"
-    "github.com/anshumanbh/tko-subs"
-    "github.com/dwisiswant0/crlfuzz/cmd/crlfuzz"
-    "github.com/jaeles-project/jaeles"
-    "github.com/devanshbatham/paradox"
-    "github.com/j3ssie/jldc"
-    "github.com/takshal/freq"
-    "github.com/ThreatUnkown/jsubfinder"
-    "github.com/d3mondev/puredns/v2"
-    "github.com/signedsecurity/sigurlfind3r/cmd/sigurlfind3r"
-    "github.com/chromedp/chromedp"
-    "github.com/ferreiraklet/airixss"
-    "github.com/ferreiraklet/nilo"
-    "github.com/owasp-amass/amass/v3/..."
-    "github.com/OJ/gobuster/v3"  # Gobuster adicionado
-)
+    # Findomain
+    if ! command -v findomain &> /dev/null; then
+        log "${YELLOW}[+] Installing Findomain${NC}"
+        curl -LO https://github.com/Findomain/Findomain/releases/latest/download/findomain-linux.zip &>> $LOG_FILE
+        unzip findomain-linux.zip -d $GO_BIN_PATH &>> $LOG_FILE
+        chmod +x $GO_BIN_PATH/findomain
+        rm findomain-linux.zip
+        log "${GREEN}[+] Findomain installed${NC}"
+    fi
 
-for tool in "${go_tools[@]}"; do
-    install_go_tool $tool
-done
+    # Dirsearch
+    if [ ! -d "$INSTALL_DIR/dirsearch" ]; then
+        log "${YELLOW}[+] Installing Dirsearch${NC}"
+        git clone https://github.com/maurosoria/dirsearch.git $INSTALL_DIR/dirsearch &>> $LOG_FILE
+        ln -sf "$INSTALL_DIR/dirsearch/dirsearch.py" /usr/local/bin/dirsearch
+        log "${GREEN}[+] Dirsearch installed${NC}"
+    fi
 
-# Ferramentas Python (com venv)
-python_tools=(
-    "https://github.com/obheda12/GitDorker GitDorker"
-    "https://github.com/0x240x23elu/JSScanner JSScanner"
-    "https://github.com/xnl-h4ck3r/xnLinkFinder xnLinkFinder"
-    "https://github.com/xnl-h4ck3r/waymore waymore"
-    "https://github.com/s0md3v/Photon Photon"
-    "https://github.com/s0md3v/XSStrike XSStrike"
-)
+    # Sudomy
+    if [ ! -d "$INSTALL_DIR/Sudomy" ]; then
+        log "${YELLOW}[+] Installing Sudomy${NC}"
+        git clone --recursive https://github.com/screetsec/Sudomy.git $INSTALL_DIR/Sudomy &>> $LOG_FILE
+        pip3 install -r $INSTALL_DIR/Sudomy/requirements.txt &>> $LOG_FILE
+        ln -sf "$INSTALL_DIR/Sudomy/sudomy" /usr/local/bin/sudomy
+        log "${GREEN}[+] Sudomy installed${NC}"
+    fi
 
-for tool in "${python_tools[@]}"; do
-    repo_url=$(echo $tool | awk '{print $1}')
-    tool_name=$(echo $tool | awk '{print $2}')
-    install_python_tool "$repo_url" "$tool_name"
-done
+    # GF patterns
+    log "${YELLOW}[+] Setting up GF patterns${NC}"
+    mkdir -p ~/.gf
+    if [ -d "$INSTALL_DIR/tomnomnom/gf" ]; then
+        cp -r $INSTALL_DIR/tomnomnom/gf/examples ~/.gf
+    fi
+    log "${GREEN}[+] GF patterns configured${NC}"
+}
 
-# Ferramentas especiais
-echo -e "${YELLOW}[*] Instalando Findomain...${NC}"
-findomain_latest=$(curl -s https://api.github.com/repos/findomain/findomain/releases/latest | grep -oP 'https://github.com/findomain/findomain/releases/download/[^/]+/findomain-linux' | head -n 1)
-wget -q "$findomain_latest" -O /usr/local/bin/findomain
-chmod +x /usr/local/bin/findomain
+# Main installation function
+main() {
+    install_dependencies
+    install_go_tools
+    install_python_tools
+    install_special_tools
 
-# Dirsearch
-echo -e "${YELLOW}[*] Instalando Dirsearch...${NC}"
-git clone https://github.com/maurosoria/dirsearch /opt/dirsearch
-ln -s /opt/dirsearch/dirsearch.py /usr/local/bin/dirsearch
-echo -e "${GREEN}[+] Dirsearch instalado em /opt/dirsearch${NC}"
+    # Ask about Axiom
+    read -p "[?] Install Axiom? [y/N] " -n 1 -r
+    echo
+    if [[ $REPLY =~ ^[Yy]$ ]]; then
+        log "${YELLOW}[+] Installing Axiom${NC}"
+        bash <(curl -s https://raw.githubusercontent.com/pry0cc/axiom/master/interact/axiom-configure)
+        log "${GREEN}[+] Axiom installed${NC}"
+    fi
 
-# Gobuster (já incluso nas ferramentas Go acima)
-echo -e "${YELLOW}[*] Verificando Gobuster...${NC}"
-if [ -f "/usr/local/bin/gobuster" ]; then
-    echo -e "${GREEN}[+] Gobuster já instalado${NC}"
-else
-    GO111MODULE=on go install github.com/OJ/gobuster/v3@latest
-    mv "$GOPATH/bin/gobuster" /usr/local/bin/
-    echo -e "${GREEN}[+] Gobuster instalado${NC}"
-fi
+    log "${GREEN}[+] Installation completed!${NC}"
+    log "${BLUE}[*] Some tools may need additional configuration:"
+    log "${BLUE}[*] - Add API keys to ~/.config/ (check each tool's documentation)"
+    log "${BLUE}[*] - Configure notify providers in ~/.config/notify/provider-config.yaml"
+    log "${BLUE}[*] - Set up GF patterns in ~/.gf/"
+    log "${BLUE}[*] Full installation log: $LOG_FILE${NC}"
+}
 
-# GF Patterns
-echo -e "${YELLOW}[*] Configurando GF patterns...${NC}"
-git clone https://github.com/1ndianl33t/Gf-Patterns /opt/Gf-Patterns
-mkdir -p ~/.gf
-cp /opt/Gf-Patterns/*.json ~/.gf/
-git clone https://github.com/tomnomnom/gf /opt/gf
-cd /opt/gf && go build && cp gf /usr/local/bin/
-cd -
-
-# Sudomy
-echo -e "${YELLOW}[*] Instalando Sudomy...${NC}"
-git clone --recursive https://github.com/screetsec/Sudomy /opt/Sudomy
-cd /opt/Sudomy
-python3 -m pip install -r requirements.txt
-ln -s /opt/Sudomy/sudomy /usr/local/bin/sudomy
-echo -e "${GREEN}[+] Sudomy instalado em /opt/Sudomy${NC}"
-echo -e "${YELLOW}[!] Configure as APIs em /opt/Sudomy/api_config.yaml${NC}"
-
-# ==============================================
-# 6. INSTALAÇÃO DO AXIOM (OPCIONAL)
-# ==============================================
-if [[ "$cloud_provider" != "Local" ]]; then
-    echo -e "${YELLOW}[?] Você está em $cloud_provider. Instalar Axiom mesmo assim? [s/N]${NC}"
-    read -r install_axiom
-else
-    echo -e "${YELLOW}[?] Instalar Axiom? [s/N]${NC}"
-    read -r install_axiom
-fi
-
-if [[ "$install_axiom" =~ ^[SsYy]$ ]]; then
-    echo -e "${BLUE}[*] Instalando Axiom...${NC}"
-    bash <(curl -s https://raw.githubusercontent.com/pry0cc/axiom/master/interact/axiom-configure)
-    echo -e "${GREEN}[+] Axiom instalado!${NC}"
-else
-    echo -e "${YELLOW}[*] Pulando instalação do Axiom.${NC}"
-fi
-
-# ==============================================
-# 7. FINALIZAÇÃO
-# ==============================================
-echo -e "${GREEN}"
-cat << "EOF"
-╔════════════════════════════════════════╗
-║                                        ║
-║   Instalação concluída com sucesso!    ║
-║                                        ║
-║   Feito por EXPL0ITER                  ║
-║   expl0iter@devstorm.io                ║
-║   https://brenosantana.com             ║
-║                                        ║
-╚════════════════════════════════════════╝
-EOF
-echo -e "${NC}"
-
-echo -e "${CYAN}[*] Todas as ferramentas estão em /usr/local/bin${NC}"
-echo -e "${CYAN}[*] Execute 'source /etc/profile' ou reinicie o terminal${NC}"
-echo -e "\n${MAGENTA}[*] Ferramentas instaladas:"
-echo -e "  - Subfinder, Assetfinder, httpx, gau, nuclei, ffuf"
-echo -e "  - Amass, Dirsearch, Gobuster, Katana, Dalfox"
-echo -e "  - Gowitness, Chaos, Jaeles, GF, Kiterunner"
-echo -e "  - E +50 outras ferramentas de recon${NC}"
+# Execute main function
+main
