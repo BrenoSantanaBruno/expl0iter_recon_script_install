@@ -219,6 +219,15 @@ git clone https://github.com/tomnomnom/gf /opt/gf
 cd /opt/gf && go build && cp gf /usr/local/bin/
 cd -
 
+# Sudomy
+echo -e "${YELLOW}[*] Instalando Sudomy...${NC}"
+git clone --recursive https://github.com/screetsec/Sudomy /opt/Sudomy
+cd /opt/Sudomy
+python3 -m pip install -r requirements.txt
+ln -s /opt/Sudomy/sudomy /usr/local/bin/sudomy
+echo -e "${GREEN}[+] Sudomy instalado em /opt/Sudomy${NC}"
+echo -e "${YELLOW}[!] Configure as APIs em /opt/Sudomy/api_config.yaml${NC}"
+
 # ==============================================
 # 6. INSTALAÇÃO DO AXIOM (OPCIONAL)
 # ==============================================
